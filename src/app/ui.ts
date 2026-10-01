@@ -2,7 +2,7 @@ import { AIRCRAFT_LIST } from "../core/aircraft";
 import type { AssistLevel } from "../core/assist";
 import { CalibrationWizard } from "../input/calibration";
 import { saveCalibration } from "../input/gamepad";
-import type { Game, StartMode } from "./game";
+import type { Game, StartMode, WindLevel } from "./game";
 
 function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
@@ -40,6 +40,7 @@ export function setupUi(game: Game): void {
   };
   choiceGroup("assist-choices", "assist", String(game.settings.assist), (v) => game.setAssist(Number(v) as AssistLevel));
   choiceGroup("start-choices", "start", game.settings.start, (v) => game.setStart(v as StartMode));
+  choiceGroup("wind-choices", "wind", game.settings.wind, (v) => game.setWind(v as WindLevel));
 
   btnFly.addEventListener("click", () => game.startFlight());
   el<HTMLButtonElement>("btn-menu").addEventListener("click", () => game.openMenu());
@@ -115,7 +116,7 @@ export function setupUi(game: Game): void {
     wizDetected.textContent = v.detected;
     wizNext.disabled = !v.canNext;
     wizSkip.classList.toggle("hidden", !v.canSkip);
-    wizNext.textContent = v.step.type === "reset" ? "Terminer" : "Suivant";
+    wizNext.textContent = v.step.type === "smoke" ? "Terminer" : "Suivant";
     if (wizAxes.childElementCount !== v.axes.length) {
       wizAxes.innerHTML = "";
       for (const a of v.axes) {

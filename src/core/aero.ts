@@ -52,7 +52,7 @@ function smoothstep(a: number, b: number, x: number): number {
  * Coefficients d'un panneau à l'incidence alpha (radians) et avec un braquage de volet (radians).
  * Régime attaché linéaire, puis transition progressive vers une plaque plane au-delà du décrochage.
  */
-export function surfaceCoefficients(s: Surface, alpha: number, deflection: number): { cl: number; cd: number; cm: number; stalled: number } {
+export function surfaceCoefficients(s: Surface, alpha: number, deflection: number, groundEffect = 0): { cl: number; cd: number; cm: number; stalled: number } {
   const af = s.airfoil;
   const ar = s.aspectRatio;
   // Pente de portance 3D (Khan & Nahon 2015).
@@ -66,9 +66,12 @@ export function surfaceCoefficients(s: Surface, alpha: number, deflection: numbe
   const stallPos = af.alphaStallPos + 0.6 * dAlpha0;
   const stallNeg = af.alphaStallNeg + 0.6 * dAlpha0;
 
+  // Effet de sol : portance un peu plus forte, traînée induite réduite.
+  const geLift = 1 + 0.1 * groundEffect;
+  const geDrag = 1 - 0.55 * groundEffect;
   const attached = (a: number) => {
-    const cl = a3d * (a - alpha0Eff);
-    const cd = af.cd0 + (cl * cl) / (Math.PI * s.efficiency * ar);
+    const cl = a3d * (a - alpha0Eff) * geLift;
+    const cd = af.cd0 + (geDrag * cl * cl) / (Math.PI * s.efficiency * ar);
     return { cl, cd };
   };
 
@@ -117,20 +120,29 @@ const tmpArm = new Vector3();
 const tmpF = new Vector3();
 const tmpM = new Vector3();
 
+export interface AirEnvironment {
+  /** Vitesse du souffle d'hélice vers l'arrière (m/s). */
+  washSpeed: number;
+  /** Vent dans le repère avion (m/s). */
+  windBody: Vector3;
+  /** Vitesse verticale de l'air déviée par l'aile au niveau de l'empennage, positive vers le bas (m/s). */
+  downwashSpeed: number;
+  /** Intensité de l'effet de sol, 0..1. */
+  groundEffect: number;
+}
+
 /**
  * Force et moment (au CG) d'un panneau.
  * @param vBody vitesse du CG dans le repère avion (m/s)
  * @param omega vitesse angulaire dans le repère avion (rad/s)
- * @param washSpeed vitesse du souffle d'hélice vers l'arrière (m/s)
- * @param windBody vent dans le repère avion (m/s)
+ * @param deflection braquage réel de la gouverne (rad)
  */
 export function surfaceForces(
   s: Surface,
   vBody: Vector3,
   omega: Vector3,
-  controls: ControlVector,
-  washSpeed: number,
-  windBody: Vector3,
+  deflection: number,
+  env: AirEnvironment,
   out?: SurfaceForces,
 ): SurfaceForces {
   const result = out ?? { force: new Vector3(), moment: new Vector3(), alpha: 0, cl: 0, cd: 0, deflection: 0, stalled: 0 };
@@ -138,14 +150,15 @@ export function surfaceForces(
   tmpArm.copy(s.pos);
   tmpW.copy(omega).cross(tmpArm).add(vBody);
   // Vitesse de l'air vue par le panneau.
-  tmpW.negate().add(windBody);
+  tmpW.negate().add(env.windBody);
   // Souffle d'hélice : l'air est poussé vers l'arrière (+Z).
-  tmpW.z += washSpeed * s.wash;
+  tmpW.z += env.washSpeed * s.wash;
+  // Déflexion de l'aile : l'air descend derrière elle.
+  tmpW.y -= env.downwashSpeed * s.downwash;
   // On retire la composante le long de l'envergure.
   const along = tmpW.dot(s.spanDir);
   tmpWin.copy(tmpW).addScaledVector(s.spanDir, -along);
   const speed2 = tmpWin.lengthSq();
-  const deflection = surfaceDeflection(s, controls);
   result.deflection = deflection;
   if (speed2 < 1e-4) {
     result.force.set(0, 0, 0);
@@ -155,14 +168,14 @@ export function surfaceForces(
   }
   const speed = Math.sqrt(speed2);
   const alpha = Math.atan2(tmpWin.dot(s.normal), tmpWin.dot(s.chordDir));
-  const { cl, cd, cm, stalled } = surfaceCoefficients(s, alpha, deflection);
+  const { cl, cd, cm, stalled } = surfaceCoefficients(s, alpha, deflection, s.groundEffect ? env.groundEffect : 0);
   const q = 0.5 * AIR_DENSITY * speed2;
   // Direction de la portance : perpendiculaire au flux, dans le plan du panneau.
   tmpLift.copy(s.normal).addScaledVector(tmpWin, -tmpWin.dot(s.normal) / speed2).normalize();
   tmpF.copy(tmpLift).multiplyScalar(q * s.area * cl);
   tmpF.addScaledVector(tmpWin, (q * s.area * cd) / speed);
-  // Moment de tangage propre autour de l'axe d'envergure.
-  tmpM.copy(s.spanDir).multiplyScalar(q * s.area * s.chord * cm);
+  // Moment de tangage propre : axe normale × corde, orienté « bord d'attaque qui monte » quel que soit le côté.
+  tmpM.copy(s.normal).cross(s.chordDir).multiplyScalar(q * s.area * s.chord * cm);
   result.force.copy(tmpF);
   result.moment.copy(tmpArm).cross(tmpF).add(tmpM);
   result.alpha = alpha; result.cl = cl; result.cd = cd; result.stalled = stalled;

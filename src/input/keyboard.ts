@@ -1,6 +1,6 @@
 import type { ControlVector } from "../core/aero";
 
-export type KeyAction = "reset" | "camera" | "pause" | "menu";
+export type KeyAction = "reset" | "camera" | "pause" | "menu" | "smoke";
 
 /** Clavier de secours : flèches pour le manche droit, Z/S pour les gaz, Q/D pour la dérive (positions physiques). */
 export class KeyboardInput {
@@ -35,6 +35,7 @@ export class KeyboardInput {
     switch (code) {
       case "Space": return "reset";
       case "KeyC": return "camera";
+      case "KeyF": return "smoke";
       case "KeyP": return "pause";
       case "Escape": return "menu";
       default: return null;

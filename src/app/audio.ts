@@ -53,14 +53,14 @@ export class SoundManager {
     return this.muted;
   }
 
-  setEngine(throttle: number, airspeed: number, running: boolean): void {
+  setEngine(throttle: number, airspeed: number, running: boolean, type: "prop" | "jet" = "prop"): void {
     if (!this.ctx || !this.engineOsc || !this.engineOsc2 || !this.engineGain) return;
     const t = this.ctx.currentTime;
-    const level = running ? 0.02 + throttle * 0.11 : 0;
+    const level = running ? 0.02 + throttle * (type === "jet" ? 0.07 : 0.11) : 0;
     this.engineGain.gain.setTargetAtTime(level, t, 0.08);
-    const f = 60 + throttle * 190 + airspeed * 1.5;
+    const f = type === "jet" ? 90 + throttle * 420 + airspeed * 2 : 60 + throttle * 190 + airspeed * 1.5;
     this.engineOsc.frequency.setTargetAtTime(f, t, 0.1);
-    this.engineOsc2.frequency.setTargetAtTime(f * 2.01, t, 0.1);
+    this.engineOsc2.frequency.setTargetAtTime(f * (type === "jet" ? 3.02 : 2.01), t, 0.1);
   }
 
   ding(): void {

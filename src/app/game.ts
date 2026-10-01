@@ -8,22 +8,26 @@ import { CameraRig } from "../view/camera";
 import { AIR_START, GROUND_START, PILOT_POSITION, createField, createRings, type Ring } from "../view/field";
 import { createPlaneModel, type PlaneModel } from "../view/planeMesh";
 import { createScene, followShadow, type SceneContext } from "../view/scene";
+import { SmokeSystem } from "../view/smoke";
 import { Hud } from "./hud";
 import { SoundManager } from "./audio";
 
 export type StartMode = "air" | "ground";
+export type WindLevel = "none" | "light" | "medium";
+const WIND_PRESETS: Record<WindLevel, [number, number]> = { none: [0, 0], light: [2, 0.8], medium: [4, 1.8] };
 export type GameState = "menu" | "flying" | "crashed" | "paused";
 
 export interface GameSettings {
   aircraftId: string;
   assist: AssistLevel;
   start: StartMode;
+  wind: WindLevel;
 }
 
 const SETTINGS_KEY = "rcsim.settings.v1";
 
 export function loadSettings(): GameSettings {
-  const defaults: GameSettings = { aircraftId: "trainer3", assist: 2, start: "air" };
+  const defaults: GameSettings = { aircraftId: "trainer3", assist: 2, start: "air", wind: "none" };
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return defaults;
@@ -32,6 +36,7 @@ export function loadSettings(): GameSettings {
       aircraftId: typeof parsed.aircraftId === "string" ? parsed.aircraftId : defaults.aircraftId,
       assist: parsed.assist === 0 || parsed.assist === 1 || parsed.assist === 2 ? parsed.assist : defaults.assist,
       start: parsed.start === "ground" ? "ground" : "air",
+      wind: parsed.wind === "light" || parsed.wind === "medium" ? parsed.wind : "none",
     };
   } catch {
     return defaults;
@@ -54,6 +59,7 @@ export class Game {
   sim: Simulation;
   model: PlaneModel;
   rings: Ring[];
+  readonly smoke = new SmokeSystem();
   nextRing = 0;
   score = 0;
   laps = 0;
@@ -65,6 +71,8 @@ export class Game {
   private ringSide = 0;
   private readonly tmp = new Vector3();
   private readonly tmpQ = new Quaternion();
+  private readonly smokeOrigin = new Vector3();
+  private smokeWasOn = false;
   onStateChange: ((s: GameState) => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -76,8 +84,10 @@ export class Game {
     this.settings = loadSettings();
     this.spec = findAircraft(this.settings.aircraftId);
     this.sim = new Simulation(buildAircraft(this.spec));
+    this.applyWind();
     this.model = createPlaneModel(this.spec);
     this.ctx.scene.add(this.model.group);
+    this.ctx.scene.add(this.smoke.points);
     this.resetAircraft();
     this.highlightRings();
 
@@ -97,9 +107,21 @@ export class Game {
     this.ctx.scene.remove(this.model.group);
     this.model.dispose();
     this.sim = new Simulation(buildAircraft(this.spec));
+    this.applyWind();
     this.model = createPlaneModel(this.spec);
     this.ctx.scene.add(this.model.group);
     this.resetAircraft();
+  }
+
+  setWind(level: WindLevel): void {
+    this.settings.wind = level;
+    saveSettings(this.settings);
+    this.applyWind();
+  }
+
+  private applyWind(): void {
+    const [speed, gust] = WIND_PRESETS[this.settings.wind];
+    this.sim.wind.set(speed, gust);
   }
 
   setAssist(level: AssistLevel): void {
@@ -118,7 +140,7 @@ export class Game {
     if (this.settings.start === "ground") {
       placeOnGround(s, this.sim.aircraft, GROUND_START, 0);
     } else {
-      placeInAir(s, AIR_START, 0, this.spec.cruiseSpeed);
+      placeInAir(s, AIR_START, 0, this.spec.cruiseSpeed, 0.55);
     }
     this.input.keyboard.setThrottle(this.settings.start === "ground" ? 0 : 0.55);
     this.crashTimer = 0;
@@ -208,9 +230,17 @@ export class Game {
     this.model.group.quaternion.copy(s.orientation);
   }
 
+  private readonly shaped: ControlVector = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
+
   private stepSim(raw: ControlVector): void {
     attitude(this.sim.state, this.att);
-    applyAssist(raw, this.att, this.spec, this.settings.assist, this.controls);
+    // Expo de 30 % comme sur une vraie radio : plus doux autour du neutre, pleine course en butée.
+    const expo = (x: number) => 0.7 * x + 0.3 * x * x * x;
+    this.shaped.roll = expo(raw.roll);
+    this.shaped.pitch = expo(raw.pitch);
+    this.shaped.yaw = expo(raw.yaw);
+    this.shaped.throttle = raw.throttle;
+    applyAssist(this.shaped, this.att, this.spec, this.settings.assist, this.controls, this.sim.state.airspeed);
     this.sim.step(this.controls, FIXED_DT);
   }
 
@@ -246,16 +276,33 @@ export class Game {
 
     const s = this.sim.state;
     this.syncModel();
-    this.model.update(this.controls, s.throttle, dtReal);
+    this.model.update(this.sim.telemetry.deflections, s.engine, dtReal);
+    this.updateSmoke(dtReal);
     this.camera.update(s.position, s.orientation, dtReal);
     followShadow(this.ctx, s.position);
-    this.sound.setEngine(s.throttle, s.airspeed, this.state === "flying" || this.state === "crashed");
+    this.sound.setEngine(s.engine, s.airspeed, this.state === "flying" || this.state === "crashed", this.spec.engine.type);
     if (this.state !== "menu") {
       this.hud.update(s.position.y, s.airspeed, s.throttle, this.score, this.settings.assist, now);
     }
     this.tmpQ.copy(s.orientation);
     this.ctx.renderer.render(this.ctx.scene, this.ctx.camera);
   };
+
+  private updateSmoke(dt: number): void {
+    const s = this.sim.state;
+    const on = this.input.smokeActive && this.state === "flying";
+    if (on !== this.smokeWasOn && this.state === "flying") {
+      this.hud.say(on ? "Fumée !" : "", "", 1200);
+      this.smokeWasOn = on;
+    }
+    if (on) {
+      this.smokeOrigin.set(...this.spec.smokePos).applyQuaternion(s.orientation).add(s.position);
+      this.smoke.emit(this.smokeOrigin, s.velocity, 140, dt);
+    }
+    this.sim.wind.sample(10, 0, this.smoke.wind);
+    this.smoke.setScale(this.ctx.renderer.domElement.clientHeight || window.innerHeight, this.ctx.camera.fov);
+    this.smoke.update(dt);
+  }
 
   run(): void {
     requestAnimationFrame(this.frame);

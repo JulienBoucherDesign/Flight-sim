@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Vector3, Quaternion } from "three";
-import { buildAircraft, TRAINER_4CH, TRAINER_3CH, type AircraftSpec } from "../src/core/aircraft";
+import { buildAircraft, TRAINER_4CH, TRAINER_3CH, ALPHAJET, type AircraftSpec } from "../src/core/aircraft";
 import { Simulation, FIXED_DT, GRAVITY, attitude, placeInAir, placeOnGround } from "../src/core/sim";
 import { applyAssist, type AssistLevel } from "../src/core/assist";
 import type { ControlVector } from "../src/core/aero";
@@ -11,10 +11,13 @@ function pitchMomentAtAlpha(sim: Simulation, speed: number, alphaRad: number, pi
   const s = sim.state;
   s.orientation.identity();
   s.omega.set(0, 0, 0);
+  s.engine = 0;
   // Vitesse inclinée sous le nez : alpha positif.
   s.velocity.set(0, -speed * Math.sin(alphaRad), -speed * Math.cos(alphaRad));
   const f = new Vector3();
   const m = new Vector3();
+  // Deux passes : la déflexion de l'aile sur l'empennage se calcule d'après la portance précédente.
+  sim.computeBodyForces({ roll: 0, pitch: pitchCmd, yaw: 0, throttle: 0 }, f, m);
   sim.computeBodyForces({ roll: 0, pitch: pitchCmd, yaw: 0, throttle: 0 }, f, m);
   return { moment: m.x, lift: f.y };
 }
@@ -38,7 +41,7 @@ function fly(spec: AircraftSpec, opts: { seconds: number; throttle: number; assi
   const steps = Math.round(opts.seconds / FIXED_DT);
   for (let i = 0; i < steps; i++) {
     const att = attitude(sim.state);
-    applyAssist(raw, att, spec, opts.assist, ctrl);
+    applyAssist(raw, att, spec, opts.assist, ctrl, sim.state.airspeed);
     sim.step(ctrl);
     minAlt = Math.min(minAlt, sim.state.position.y);
     maxAlt = Math.max(maxAlt, sim.state.position.y);
@@ -48,7 +51,8 @@ function fly(spec: AircraftSpec, opts: { seconds: number; throttle: number; assi
   return { crashed: sim.state.crashed, minAlt, maxAlt, maxRoll, finalSpeed: sim.state.airspeed, finalAlt: sim.state.position.y, reason: sim.state.crashReason };
 }
 
-for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
+for (const spec of [TRAINER_4CH, TRAINER_3CH, ALPHAJET]) {
+  const jet = spec.engine.type === "jet";
   describe(`stabilité statique : ${spec.name}`, () => {
     const sim = new Simulation(buildAircraft(spec));
 
@@ -70,7 +74,7 @@ for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
 
     it("se trime : un braquage de profondeur modéré annule le moment en croisière", () => {
       let best = Infinity, bestCmd = 0;
-      for (let cmd = -0.6; cmd <= 0.6; cmd += 0.05) {
+      for (let cmd = -0.6; cmd <= 0.6; cmd += 0.01) {
         const { moment } = pitchMomentAtAlpha(sim, spec.cruiseSpeed, 3 * DEG, cmd);
         if (Math.abs(moment) < best) { best = Math.abs(moment); bestCmd = cmd; }
       }
@@ -81,15 +85,15 @@ for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
 
   describe(`vol : ${spec.name}`, () => {
     it("vole 30 s droit avec l'aide forte sans s'écraser", () => {
-      const r = fly(spec, { seconds: 30, throttle: 0.6, assist: 2 });
+      const r = fly(spec, { seconds: 30, throttle: jet ? 0.5 : 0.6, assist: 2 });
       expect(r.crashed, r.reason).toBe(false);
       expect(r.minAlt).toBeGreaterThan(15);
-      expect(r.maxAlt).toBeLessThan(150);
+      expect(r.maxAlt).toBeLessThan(jet ? 400 : 150);
       expect(r.maxRoll).toBeLessThan(15 * DEG);
     });
 
     it("reste maîtrisable 20 s sans aucune aide, manches au neutre", () => {
-      const r = fly(spec, { seconds: 20, throttle: 0.55, assist: 0 });
+      const r = fly(spec, { seconds: jet ? 12 : 20, throttle: jet ? 0.5 : 0.55, assist: 0 });
       expect(r.crashed, r.reason).toBe(false);
       expect(r.minAlt).toBeGreaterThan(5);
       expect(r.maxRoll).toBeLessThan(60 * DEG);
@@ -98,7 +102,7 @@ for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
     it("vire à droite avec l'aide forte et le manche à droite", () => {
       const sim = new Simulation(buildAircraft(spec));
       placeInAir(sim.state, new Vector3(0, 50, 0), 0, spec.cruiseSpeed);
-      const raw: ControlVector = { roll: 0.6, pitch: 0, yaw: 0, throttle: 0.65 };
+      const raw: ControlVector = { roll: 0.6, pitch: 0, yaw: 0, throttle: jet ? 0.5 : 0.65 };
       const ctrl: ControlVector = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
       let turned = 0;
       let lastHeading = attitude(sim.state).heading;
@@ -109,7 +113,7 @@ for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
         while (dh < -Math.PI) dh += 2 * Math.PI;
         turned += dh;
         lastHeading = att.heading;
-        applyAssist(raw, att, spec, 2, ctrl);
+        applyAssist(raw, att, spec, 2, ctrl, sim.state.airspeed);
         sim.step(ctrl);
       }
       const att = attitude(sim.state);
@@ -120,12 +124,12 @@ for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
     });
 
     it("plane moteur coupé sans tomber comme une pierre", () => {
-      const r = fly(spec, { seconds: 10, throttle: 0, assist: 2 });
-      expect(r.crashed).toBe(false);
-      // Un planeur de ce type descend à 1 ou 2 m/s.
-      expect(50 - r.finalAlt).toBeLessThan(30);
-      expect(r.finalSpeed).toBeGreaterThan(6);
-      expect(r.finalSpeed).toBeLessThan(20);
+      const r = fly(spec, { seconds: 10, throttle: 0, assist: 2, alt: jet ? 80 : 50 });
+      expect(r.crashed, r.reason).toBe(false);
+      // Un trainer descend à 1 ou 2 m/s, un jet un peu plus.
+      expect((jet ? 80 : 50) - r.finalAlt).toBeLessThan(jet ? 50 : 30);
+      expect(r.finalSpeed).toBeGreaterThan(spec.cruiseSpeed * 0.45);
+      expect(r.finalSpeed).toBeLessThan(spec.cruiseSpeed * 1.4);
     });
   });
 
@@ -151,8 +155,8 @@ for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
       let airborneAt = -1;
       for (let i = 0; i < 12 / FIXED_DT; i++) {
         const t = i * FIXED_DT;
-        raw.pitch = t > 2 ? 0.35 : 0;
-        applyAssist(raw, attitude(sim.state), spec, 2, ctrl);
+        raw.pitch = t > 2 ? (jet ? 0.25 : 0.35) : 0;
+        applyAssist(raw, attitude(sim.state), spec, 2, ctrl, sim.state.airspeed);
         sim.step(ctrl);
         if (sim.state.crashed) break;
         if (sim.state.position.y > 3 && airborneAt < 0) airborneAt = t;
@@ -163,6 +167,101 @@ for (const spec of [TRAINER_4CH, TRAINER_3CH]) {
     });
   });
 }
+
+describe("réalisme", () => {
+  it("le moteur monte en régime progressivement et les servos ont une vitesse finie", () => {
+    const sim = new Simulation(buildAircraft(TRAINER_4CH));
+    placeInAir(sim.state, new Vector3(0, 50, 0), 0, 11, 0);
+    sim.step({ roll: 1, pitch: 0, yaw: 0, throttle: 1 });
+    expect(sim.state.engine).toBeGreaterThan(0);
+    expect(sim.state.engine).toBeLessThan(0.2);
+    const aileron = sim.aircraft.surfaces.findIndex((s) => s.name === "aile droite ext.");
+    const full = 18 * DEG;
+    expect(Math.abs(sim.telemetry.deflections[aileron])).toBeLessThan(full * 0.2);
+    for (let i = 0; i < 0.5 / FIXED_DT; i++) sim.step({ roll: 1, pitch: 0, yaw: 0, throttle: 1 });
+    expect(Math.abs(sim.telemetry.deflections[aileron])).toBeCloseTo(full, 3);
+    expect(sim.state.engine).toBeGreaterThan(0.9);
+  });
+
+  it("le réacteur réagit plus lentement que l'hélice", () => {
+    const prop = new Simulation(buildAircraft(TRAINER_4CH));
+    const jet = new Simulation(buildAircraft(ALPHAJET));
+    placeInAir(prop.state, new Vector3(0, 50, 0), 0, 11, 0);
+    placeInAir(jet.state, new Vector3(0, 50, 0), 0, 26, 0);
+    for (let i = 0; i < 0.3 / FIXED_DT; i++) { prop.step({ roll: 0, pitch: 0, yaw: 0, throttle: 1 }); jet.step({ roll: 0, pitch: 0, yaw: 0, throttle: 1 }); }
+    expect(jet.state.engine).toBeLessThan(prop.state.engine);
+  });
+
+  it("le couple de l'hélice fait rouler à gauche à pleine puissance et basse vitesse", () => {
+    const sim = new Simulation(buildAircraft(TRAINER_4CH));
+    placeInAir(sim.state, new Vector3(0, 50, 0), 0, 6, 1);
+    const f = new Vector3(); const m = new Vector3();
+    sim.computeBodyForces({ roll: 0, pitch: 0, yaw: 0, throttle: 1 }, f, m);
+    // Roulis à gauche = moment positif autour de +Z, nez à gauche = positif autour de +Y.
+    expect(m.z).toBeGreaterThan(0);
+    expect(m.y).toBeGreaterThan(0);
+  });
+
+  it("le vent et les rafales restent bornés et plus faibles près du sol", () => {
+    const sim = new Simulation(buildAircraft(TRAINER_4CH));
+    sim.wind.set(4, 1.8);
+    const out = new Vector3();
+    let maxLow = 0, maxHigh = 0;
+    for (let i = 0; i < 2000; i++) { sim.wind.sample(1, 0.01, out); maxLow = Math.max(maxLow, out.length()); }
+    for (let i = 0; i < 2000; i++) { sim.wind.sample(40, 0.01, out); maxHigh = Math.max(maxHigh, out.length()); }
+    expect(maxLow).toBeLessThan(maxHigh);
+    expect(maxHigh).toBeLessThan(9);
+  });
+
+  it("vole 30 s dans le vent moyen avec l'aide forte", () => {
+    const sim = new Simulation(buildAircraft(TRAINER_3CH));
+    sim.wind.set(4, 1.8);
+    placeInAir(sim.state, new Vector3(0, 50, 0), 0, TRAINER_3CH.cruiseSpeed, 0.6);
+    const raw: ControlVector = { roll: 0, pitch: 0, yaw: 0, throttle: 0.6 };
+    const ctrl: ControlVector = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
+    let minAlt = Infinity;
+    for (let i = 0; i < 30 / FIXED_DT; i++) {
+      applyAssist(raw, attitude(sim.state), TRAINER_3CH, 2, ctrl, sim.state.airspeed);
+      sim.step(ctrl);
+      minAlt = Math.min(minAlt, sim.state.position.y);
+    }
+    expect(sim.state.crashed, sim.state.crashReason).toBe(false);
+    expect(minAlt).toBeGreaterThan(10);
+  });
+
+  it("la roue avant est directrice au roulage", () => {
+    const sim = new Simulation(buildAircraft(TRAINER_4CH));
+    placeOnGround(sim.state, sim.aircraft, new Vector3(0, 0, 0), 0);
+    let turned = 0;
+    let last = attitude(sim.state).heading;
+    for (let i = 0; i < 4 / FIXED_DT; i++) {
+      sim.step({ roll: 0, pitch: 0, yaw: i * FIXED_DT > 1.5 ? 0.5 : 0, throttle: 0.3 });
+      const h = attitude(sim.state).heading;
+      let dh = h - last;
+      while (dh > Math.PI) dh -= 2 * Math.PI;
+      while (dh < -Math.PI) dh += 2 * Math.PI;
+      turned += dh;
+      last = h;
+    }
+    expect(sim.state.crashed).toBe(false);
+    expect(sim.state.position.y).toBeLessThan(1);
+    expect(turned).toBeLessThan(-10 * DEG);
+  });
+
+  it("le jet roule nettement plus vite que le trainer aux ailerons", () => {
+    const rollRate = (spec: AircraftSpec) => {
+      const sim = new Simulation(buildAircraft(spec));
+      placeInAir(sim.state, new Vector3(0, 80, 0), 0, spec.cruiseSpeed, 0.5);
+      let max = 0;
+      for (let i = 0; i < 1.5 / FIXED_DT; i++) { sim.step({ roll: 1, pitch: 0, yaw: 0, throttle: 0.5 }); max = Math.max(max, attitude(sim.state).rollRate); }
+      return max;
+    };
+    const trainer = rollRate(TRAINER_4CH);
+    const jet = rollRate(ALPHAJET);
+    expect(trainer).toBeGreaterThan(60 * DEG);
+    expect(jet).toBeGreaterThan(trainer * 1.5);
+  });
+});
 
 describe("attitude", () => {
   it("lit le roulis à droite et le cabré avec les bons signes", () => {

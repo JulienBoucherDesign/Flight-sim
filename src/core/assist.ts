@@ -18,7 +18,7 @@ function clamp(v: number, lo: number, hi: number): number {
  * Niveau 1 : mise à plat douce quand le manche est au centre, sinon pilotage direct.
  * Niveau 0 : aucune aide.
  */
-export function applyAssist(raw: ControlVector, att: Attitude, spec: AircraftSpec, level: AssistLevel, out: ControlVector): ControlVector {
+export function applyAssist(raw: ControlVector, att: Attitude, spec: AircraftSpec, level: AssistLevel, out: ControlVector, airspeed = spec.cruiseSpeed): ControlVector {
   const g = spec.assist;
   out.throttle = raw.throttle;
   out.yaw = raw.yaw;
@@ -26,12 +26,15 @@ export function applyAssist(raw: ControlVector, att: Attitude, spec: AircraftSpe
   out.pitch = raw.pitch;
   if (level === 0) return out;
 
-  const trim = g.pitchTrimDeg * DEG;
+  // Protection contre le décrochage : sous une vitesse de sécurité, l'aide baisse le nez.
+  const safeSpeed = spec.cruiseSpeed * 0.8;
+  const slow = clamp((safeSpeed - airspeed) / (safeSpeed * 0.35), 0, 1);
+  const trim = g.pitchTrimDeg * DEG - slow * 14 * DEG;
   if (level === 2) {
     const maxBank = 50 * DEG;
     const maxPitch = 22 * DEG;
     const rollTarget = raw.roll * maxBank;
-    const pitchTarget = trim + raw.pitch * maxPitch;
+    const pitchTarget = trim + raw.pitch * maxPitch * (1 - 0.7 * slow);
     out.roll = clamp(g.rollGain * (rollTarget - att.roll) - g.rollDamping * att.rollRate, -1, 1);
     out.pitch = clamp(g.pitchGain * (pitchTarget - att.pitch) - g.pitchDamping * att.pitchRate, -1, 1);
     // Un peu de dérive dans le sens du virage pour des virages propres.

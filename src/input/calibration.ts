@@ -4,7 +4,8 @@ export type WizardStep =
   | { type: "range"; channel: StickChannel }
   | { type: "direction"; channel: StickChannel }
   | { type: "center" }
-  | { type: "reset" };
+  | { type: "reset" }
+  | { type: "smoke" };
 
 export const CHANNEL_LABELS: Record<StickChannel, string> = {
   throttle: "des GAZ",
@@ -42,6 +43,7 @@ export class CalibrationWizard {
   private latest: number[] = [];
   private result: Partial<Record<StickChannel, AxisCalibration>> = {};
   private resetBinding: ButtonBinding | undefined;
+  private smokeBinding: ButtonBinding | undefined;
   private candidate = -1;
 
   constructor(gamepad: Gamepad) {
@@ -53,6 +55,7 @@ export class CalibrationWizard {
     }
     this.steps.push({ type: "center" });
     this.steps.push({ type: "reset" });
+    this.steps.push({ type: "smoke" });
     this.beginStep(gamepad);
   }
 
@@ -93,11 +96,13 @@ export class CalibrationWizard {
         if (range > bestRange) { bestRange = range; best = i; }
       }
       this.candidate = best;
-    } else if (step.type === "reset") {
+    } else if (step.type === "reset" || step.type === "smoke") {
       // Un bouton pressé ou un axe qui a bougé depuis le début de l'étape.
       const used = this.usedAxes();
+      if (this.resetBinding?.kind === "axis" && step.type === "smoke") used.add(this.resetBinding.index);
       this.candidate = -1;
       for (let i = 0; i < raw.buttons.length; i++) {
+        if (step.type === "smoke" && this.resetBinding?.kind === "button" && this.resetBinding.index === i) continue;
         if (raw.buttons[i] > 0.5 && (this.baselineButtons[i] ?? 0) <= 0.5) { this.candidate = 1000 + i; break; }
       }
       if (this.candidate < 0) {
@@ -154,6 +159,13 @@ export class CalibrationWizard {
         canNext = this.candidate >= 0;
         canSkip = true;
         break;
+      case "smoke":
+        title = "Interrupteur de FUMÉE (facultatif)";
+        text = "Bascule un interrupteur du haut de la radio pour commander la fumée (il faut l'avoir affecté à une voie dans la radio). Sinon clique sur Passer.";
+        detected = this.candidate >= 1000 ? `Bouton ${this.candidate - 1000 + 1} détecté` : this.candidate >= 0 ? `Interrupteur sur l'axe ${this.candidate + 1} détecté` : "Rien détecté pour l'instant.";
+        canNext = this.candidate >= 0;
+        canSkip = true;
+        break;
     }
     return { step, title, text, axes, detected, canNext, canSkip };
   }
@@ -195,7 +207,14 @@ export class CalibrationWizard {
       case "reset": {
         if (!skip && this.candidate >= 0) {
           if (this.candidate >= 1000) this.resetBinding = { kind: "button", index: this.candidate - 1000, rest: 0 };
-          else this.resetBinding = { kind: "axis", index: this.candidate, rest: this.baseline[this.candidate] ?? 0 };
+          else this.resetBinding = { kind: "axis", index: this.candidate, rest: this.baseline[this.candidate] ?? 0, on: this.latest[this.candidate] };
+        }
+        break;
+      }
+      case "smoke": {
+        if (!skip && this.candidate >= 0) {
+          if (this.candidate >= 1000) this.smokeBinding = { kind: "button", index: this.candidate - 1000, rest: 0 };
+          else this.smokeBinding = { kind: "axis", index: this.candidate, rest: this.baseline[this.candidate] ?? 0, on: this.latest[this.candidate] };
         }
         // Dernière étape : la calibration est complète.
         return this.build();
@@ -217,6 +236,6 @@ export class CalibrationWizard {
   private build(): RadioCalibration | null {
     const t = this.result.throttle, p = this.result.pitch, r = this.result.roll, y = this.result.yaw;
     if (!t || !p || !r || !y) return null;
-    return { version: 1, gamepadId: this.gamepadId, throttle: t, pitch: p, roll: r, yaw: y, reset: this.resetBinding, deadband: 0.04 };
+    return { version: 1, gamepadId: this.gamepadId, throttle: t, pitch: p, roll: r, yaw: y, reset: this.resetBinding, smoke: this.smokeBinding, deadband: 0.04 };
   }
 }

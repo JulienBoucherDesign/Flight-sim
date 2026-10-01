@@ -17,10 +17,21 @@ export class InputManager {
   readonly raw: ControlVector = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
   private lastSource: InputSource = "keyboard";
   private actionListeners: ((a: KeyAction) => void)[] = [];
+  /** Fumée commandée au clavier (bascule avec F). */
+  keyboardSmoke = false;
 
   constructor() {
     this.keyboard = new KeyboardInput();
-    this.keyboard.onAction((a) => { for (const l of this.actionListeners) l(a); });
+    this.keyboard.onAction((a) => {
+      if (a === "smoke") this.keyboardSmoke = !this.keyboardSmoke;
+      for (const l of this.actionListeners) l(a);
+    });
+  }
+
+  /** Fumée demandée : interrupteur de la radio s'il est réglé, sinon la touche F. */
+  get smokeActive(): boolean {
+    if (this.lastSource === "radio" && this.gamepad.calibration?.smoke) return this.gamepad.smokeActive;
+    return this.keyboardSmoke;
   }
 
   onAction(listener: (a: KeyAction) => void): void {

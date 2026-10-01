@@ -64,12 +64,12 @@ function makeClouds(): Group {
   let seed = 7;
   const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   for (let i = 0; i < 18; i++) {
-    const mat = new SpriteMaterial({ map: tex, transparent: true, opacity: 0.9, depthWrite: false, fog: false });
+    const mat = new SpriteMaterial({ map: tex, transparent: true, opacity: 0.8, depthWrite: false, fog: false });
     const s = new Sprite(mat);
     const angle = rand() * Math.PI * 2;
-    const dist = 500 + rand() * 900;
-    s.position.set(Math.cos(angle) * dist, 180 + rand() * 160, Math.sin(angle) * dist);
-    const w = 180 + rand() * 220;
+    const dist = 700 + rand() * 1100;
+    s.position.set(Math.cos(angle) * dist, 260 + rand() * 220, Math.sin(angle) * dist);
+    const w = 140 + rand() * 180;
     s.scale.set(w, w * 0.5, 1);
     group.add(s);
   }

@@ -1,12 +1,10 @@
-import { BoxGeometry, CylinderGeometry, Group, Matrix4, Mesh, MeshStandardMaterial, Vector3, DoubleSide, type Material } from "three";
-import type { AircraftSpec, PanelSpec } from "../core/aircraft";
+import { BoxGeometry, CylinderGeometry, Group, Matrix4, Mesh, MeshStandardMaterial, DoubleSide, type Material } from "three";
+import type { AircraftSpec } from "../core/aircraft";
 import { buildSurface } from "../core/aircraft";
-import { surfaceDeflection, type ControlVector } from "../core/aero";
-
 export interface PlaneModel {
   group: Group;
-  /** Met à jour les gouvernes et l'hélice. */
-  update(controls: ControlVector, throttle: number, dt: number): void;
+  /** Met à jour les gouvernes (braquages réels par panneau, rad) et le moteur. */
+  update(deflections: number[], engine: number, dt: number): void;
   dispose(): void;
 }
 
@@ -18,8 +16,7 @@ function sixSided(top: number, bottom: number, side: number): Material[] {
 
 interface Hinge {
   group: Group;
-  panel: PanelSpec;
-  axis: Vector3;
+  panelIndex: number;
 }
 
 export function createPlaneModel(spec: AircraftSpec): PlaneModel {
@@ -27,7 +24,7 @@ export function createPlaneModel(spec: AircraftSpec): PlaneModel {
   root.name = spec.name;
   const materials: Material[] = [];
   const hinges: Hinge[] = [];
-  const surfacesForPanels = spec.panels.map((p) => ({ panel: p, surface: buildSurface(p) }));
+  const surfacesForPanels = spec.panels.map((p, index) => ({ panel: p, surface: buildSurface(p), index }));
 
   // Fuselage : caisson principal, nez, verrière, poutre.
   const f = spec.fuselage;
@@ -59,8 +56,20 @@ export function createPlaneModel(spec: AircraftSpec): PlaneModel {
   boom.castShadow = true;
   root.add(boom);
 
+  if (f.intakes) {
+    const intakeMats = sixSided(f.color, f.colorBottom, 0x1a1a1a);
+    materials.push(...intakeMats);
+    for (const side of [-1, 1]) {
+      const intake = new Mesh(new BoxGeometry(f.width * 0.5, f.height * 0.65, f.length * 0.3), intakeMats);
+      intake.position.set(side * f.width * 0.72, -f.height * 0.05, -f.length * 0.02);
+      intake.castShadow = true;
+      root.add(intake);
+    }
+  }
+
   // Panneaux portants.
-  for (const { panel, surface } of surfacesForPanels) {
+  for (const { panel, surface, index } of surfacesForPanels) {
+    if (panel.thickness === 0) continue; // panneau purement aérodynamique, non dessiné
     const thickness = panel.thickness ?? (panel.kind === "wing" ? 0.022 : 0.012);
     const basis = new Matrix4().makeBasis(surface.spanDir, surface.normal, surface.chordDir);
     const ff = panel.control?.flapFraction ?? 0;
@@ -92,7 +101,7 @@ export function createPlaneModel(spec: AircraftSpec): PlaneModel {
       flap.position.set(0, 0, flapChord / 2);
       flap.castShadow = true;
       hinge.add(flap);
-      hinges.push({ group: hinge, panel, axis: new Vector3(1, 0, 0) });
+      hinges.push({ group: hinge, panelIndex: index });
     }
   }
 
@@ -113,40 +122,50 @@ export function createPlaneModel(spec: AircraftSpec): PlaneModel {
     root.add(leg);
   }
 
-  // Hélice : disque translucide quand elle tourne, deux pales au repos.
+  // Propulsion : hélice (disque translucide quand elle tourne) ou tuyère de réacteur.
   const propGroup = new Group();
-  propGroup.position.set(...spec.prop.pos);
+  propGroup.position.set(spec.engine.pos[0], spec.engine.pos[1], spec.engine.pos[2]);
   root.add(propGroup);
-  const spinner = new Mesh(new CylinderGeometry(0.012, 0.025, 0.04, 10), legMat);
-  spinner.rotation.x = Math.PI / 2;
-  propGroup.add(spinner);
   const bladeMat = new MeshStandardMaterial({ color: 0x333333, roughness: 0.6 });
-  materials.push(bladeMat);
-  const blades = new Group();
-  for (const a of [0, Math.PI]) {
-    const blade = new Mesh(new BoxGeometry(0.02, spec.prop.diameter / 2, 0.006), bladeMat);
-    blade.position.set(Math.sin(a) * spec.prop.diameter / 4, Math.cos(a) * spec.prop.diameter / 4, 0);
-    blade.rotation.z = -a;
-    blades.add(blade);
-  }
-  propGroup.add(blades);
   const discMat = new MeshStandardMaterial({ color: 0x555555, transparent: true, opacity: 0.0, side: DoubleSide, depthWrite: false });
-  materials.push(discMat);
-  const disc = new Mesh(new CylinderGeometry(spec.prop.diameter / 2, spec.prop.diameter / 2, 0.004, 24), discMat);
-  disc.rotation.x = Math.PI / 2;
-  propGroup.add(disc);
+  const glowMat = new MeshStandardMaterial({ color: 0x331100, emissive: 0xff5500, emissiveIntensity: 0, roughness: 1 });
+  materials.push(bladeMat, discMat, glowMat);
+  const blades = new Group();
+  if (spec.engine.type === "prop") {
+    const spinner = new Mesh(new CylinderGeometry(0.012, 0.025, 0.04, 10), legMat);
+    spinner.rotation.x = Math.PI / 2;
+    propGroup.add(spinner);
+    for (const a of [0, Math.PI]) {
+      const blade = new Mesh(new BoxGeometry(0.02, spec.engine.diameter / 2, 0.006), bladeMat);
+      blade.position.set(Math.sin(a) * spec.engine.diameter / 4, Math.cos(a) * spec.engine.diameter / 4, 0);
+      blade.rotation.z = -a;
+      blades.add(blade);
+    }
+    propGroup.add(blades);
+    const disc = new Mesh(new CylinderGeometry(spec.engine.diameter / 2, spec.engine.diameter / 2, 0.004, 24), discMat);
+    disc.rotation.x = Math.PI / 2;
+    propGroup.add(disc);
+  } else {
+    const nozzle = new Mesh(new CylinderGeometry(spec.engine.diameter / 2, spec.engine.diameter / 2 * 1.15, 0.12, 16, 1, true), new MeshStandardMaterial({ color: 0x444444, metalness: 0.6, roughness: 0.4, side: DoubleSide }));
+    nozzle.rotation.x = Math.PI / 2;
+    nozzle.position.z = 0.02;
+    propGroup.add(nozzle);
+    const glow = new Mesh(new CylinderGeometry(spec.engine.diameter / 2 * 0.85, spec.engine.diameter / 2 * 0.85, 0.01, 16), glowMat);
+    glow.rotation.x = Math.PI / 2;
+    propGroup.add(glow);
+  }
 
   let bladeAngle = 0;
-  const update = (controls: ControlVector, throttle: number, dt: number) => {
-    for (const h of hinges) {
-      const surface = surfacesForPanels.find((s) => s.panel === h.panel)!.surface;
-      const d = surfaceDeflection(surface, controls);
-      h.group.rotation.x = d;
+  const update = (deflections: number[], engine: number, dt: number) => {
+    for (const h of hinges) h.group.rotation.x = deflections[h.panelIndex] ?? 0;
+    if (spec.engine.type === "prop") {
+      bladeAngle += (4 + engine * 60) * dt;
+      blades.rotation.z = bladeAngle;
+      discMat.opacity = Math.min(0.35, engine * 0.6);
+      blades.visible = engine < 0.15;
+    } else {
+      glowMat.emissiveIntensity = engine * 1.5;
     }
-    bladeAngle += (4 + throttle * 60) * dt;
-    blades.rotation.z = bladeAngle;
-    discMat.opacity = Math.min(0.35, throttle * 0.6);
-    blades.visible = throttle < 0.15;
   };
 
   const dispose = () => {

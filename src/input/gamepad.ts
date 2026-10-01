@@ -13,6 +13,8 @@ export interface ButtonBinding {
   index: number;
   /** Pour un axe : valeur au repos. */
   rest: number;
+  /** Pour un axe : valeur quand l'interrupteur est activé (si connue). */
+  on?: number;
 }
 
 export interface RadioCalibration {
@@ -23,6 +25,7 @@ export interface RadioCalibration {
   roll: AxisCalibration;
   yaw: AxisCalibration;
   reset?: ButtonBinding;
+  smoke?: ButtonBinding;
   deadband: number;
 }
 
@@ -102,6 +105,8 @@ export class GamepadReader {
   calibration: RadioCalibration | null = null;
   private resetWasActive = false;
   private resetEdge = false;
+  /** Interrupteur de fumée, niveau courant. */
+  smokeActive = false;
 
   /** La première manette branchée, ou celle qui correspond à la calibration. */
   current(): Gamepad | null {
@@ -133,16 +138,18 @@ export class GamepadReader {
     out.roll = normalizeCentered(cal.roll, axis(cal.roll), cal.deadband);
     out.yaw = normalizeCentered(cal.yaw, axis(cal.yaw), cal.deadband);
 
-    let resetActive = false;
-    if (cal.reset) {
-      if (cal.reset.kind === "button") {
-        const b = pad.buttons[cal.reset.index];
-        resetActive = !!b && (typeof b === "number" ? b > 0.5 : b.pressed || b.value > 0.5);
-      } else {
-        const v = cal.reset.index < axes.length ? axes[cal.reset.index] : cal.reset.rest;
-        resetActive = Math.abs(v - cal.reset.rest) > 0.5;
+    const bindingActive = (b?: ButtonBinding): boolean => {
+      if (!b) return false;
+      if (b.kind === "button") {
+        const btn = pad.buttons[b.index];
+        return !!btn && (typeof btn === "number" ? btn > 0.5 : btn.pressed || btn.value > 0.5);
       }
-    }
+      const v = b.index < axes.length ? axes[b.index] : b.rest;
+      if (b.on !== undefined) return Math.abs(v - b.on) < Math.abs(v - b.rest);
+      return Math.abs(v - b.rest) > 0.5;
+    };
+    const resetActive = bindingActive(cal.reset);
+    this.smokeActive = bindingActive(cal.smoke);
     this.resetEdge = resetActive && !this.resetWasActive;
     this.resetWasActive = resetActive;
     return true;

@@ -47,12 +47,18 @@ que le navigateur voit bien la radio.
 
 Sans radio, le clavier prend le relais : flèches pour le manche de droite (flèche bas =
 manche tiré = nez qui monte), **Z / S** pour les gaz, **Q / D** pour la dérive, **Espace**
-pour recommencer, **C** pour changer de caméra, **P** pour la pause, **Échap** pour le menu.
+pour recommencer, **F** pour la fumée, **C** pour changer de caméra, **P** pour la pause,
+**Échap** pour le menu.
 
 ## Ce qu'il y a dedans
 
-- **Deux avions** : un « Débutant 3 voies » (aile haute, grand dièdre, le manche de
-  droite commande la dérive) et un « Trainer 4 voies » avec ailerons.
+- **Trois avions** : un « Débutant 3 voies » (aile haute, grand dièdre, le manche de
+  droite commande la dérive), un « Trainer 4 voies » avec ailerons, et un **Alphajet**
+  à réacteur, rapide et vif, aux couleurs de la Patrouille de France.
+- **Fumée de meeting** sur un interrupteur de la radio (ou la touche **F**). Dans la
+  radio, affecter un interrupteur du haut (SwA, SwB…) à une voie auxiliaire, puis le
+  déclarer à l'étape « Interrupteur de fumée » de l'assistant de réglage.
+- **Vent** réglable : aucun, léger ou moyen, de face au décollage, avec des rafales.
 - **Aide au pilotage** à trois niveaux. « Forte » est un mode angle : le manche commande
   une inclinaison, l'avion revient à plat quand on le lâche, l'inclinaison et l'assiette
   sont limitées. « Légère » ne fait que remettre à plat quand le manche est au centre.
@@ -75,13 +81,22 @@ décrochage et l'amortissement sortent naturellement du modèle, sans dérivées
 - Portance linéaire jusqu'au décrochage, puis transition progressive vers un comportement
   de plaque plane (modèle de Khan et Nahon 2015, comme dans Aircraft-Physics).
 - Volets et gouvernes par décalage de l'incidence de portance nulle, efficacité selon la
-  fraction de corde (théorie des profils minces).
+  fraction de corde (théorie des profils minces). Ailes en flèche pour le jet.
+- Déflexion de l'aile sur l'empennage (downwash), qui réduit l'efficacité du
+  stabilisateur comme sur un vrai avion.
 - Souffle d'hélice par la théorie de la quantité de mouvement, appliqué à l'empennage et
-  aux panneaux intérieurs : l'avion reste pilotable à basse vitesse.
+  aux panneaux intérieurs, plus couple de réaction et souffle hélicoïdal : à pleine
+  puissance et basse vitesse l'avion tire à gauche, il faut corriger.
+- Moteur avec montée en régime (rapide pour l'hélice, lente pour le réacteur), servos à
+  vitesse finie, expo de 30 % sur les manches.
+- Effet de sol près de la piste, vent avec gradient de hauteur et rafales, roue avant
+  directrice au roulage.
 - Corps rigide à six degrés de liberté, orientation en quaternion, intégration à pas fixe
   de 1/240 s.
 - Contacts au sol par ressort-amortisseur sur les roues, les saumons et le fuselage, avec
   détection de crash tolérante.
+- L'aide au pilotage inclut une protection contre le décrochage : sous la vitesse de
+  sécurité, elle baisse le nez d'elle-même.
 
 Le code du modèle est dans `src/core/` et ne dépend pas du navigateur : `aircraft.ts`
 (géométrie des avions), `aero.ts` (forces d'un panneau), `sim.ts` (intégration et sol),

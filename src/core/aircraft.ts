@@ -57,6 +57,10 @@ export interface Surface {
   control?: SurfaceControl;
   /** Fraction du souffle d'hélice reçue, 0..1. */
   wash: number;
+  /** Fraction de la déflexion d'aile reçue, 0..1. */
+  downwash: number;
+  /** Sensible à l'effet de sol (aile principale). */
+  groundEffect: boolean;
 }
 
 export interface PanelSpec {
@@ -69,10 +73,14 @@ export interface PanelSpec {
   chord: number;
   dihedralDeg?: number;
   incidenceDeg?: number;
+  /** Flèche : le saumon recule. */
+  sweepDeg?: number;
   airfoil: Airfoil;
   efficiency?: number;
   control?: SurfaceControl;
   wash?: number;
+  /** Fraction de la déflexion d'aile reçue (1 pour un stabilisateur derrière l'aile). */
+  downwash?: number;
   /** Allongement de la voilure complète. Par défaut : envergure totale²/surface du panneau seul. */
   aspectRatio?: number;
   /** Couleur de rendu. */
@@ -89,13 +97,19 @@ export interface ContactPoint {
   kind: ContactKind;
 }
 
-export interface PropSpec {
+export interface EngineSpec {
+  type: "prop" | "jet";
   pos: [number, number, number];
+  /** Diamètre d'hélice (ou de tuyère), m. */
   diameter: number;
   /** Poussée statique maximale, newtons. */
   maxThrust: number;
   /** Vitesse à laquelle la poussée s'annule, m/s. */
   pitchSpeed: number;
+  /** Constante de temps de montée en régime, s. */
+  spoolTime: number;
+  /** Couple de réaction : moment de roulis = coeff × poussée × diamètre. */
+  torqueCoeff: number;
 }
 
 export interface FuselageSpec {
@@ -106,6 +120,8 @@ export interface FuselageSpec {
   center: [number, number, number];
   color: number;
   colorBottom: number;
+  /** Entrées d'air latérales (jet). */
+  intakes?: boolean;
 }
 
 export interface AircraftSpec {
@@ -116,8 +132,14 @@ export interface AircraftSpec {
   /** Inerties principales [autour de X (tangage), Y (lacet), Z (roulis)], kg·m². */
   inertia: [number, number, number];
   panels: PanelSpec[];
-  prop: PropSpec;
+  engine: EngineSpec;
   contacts: ContactPoint[];
+  /** Vitesse des servos, degrés par seconde. */
+  servoRateDegPerSec: number;
+  /** Point d'émission de la fumée. */
+  smokePos: [number, number, number];
+  /** Braquage maximal de la roue avant, degrés. */
+  noseWheelSteerDeg: number;
   fuselage: FuselageSpec;
   /** Vitesse de croisière conseillée, m/s. */
   cruiseSpeed: number;
@@ -156,6 +178,7 @@ export const FLAT_SYMMETRIC: Airfoil = {
 export function buildSurface(p: PanelSpec): Surface {
   const incidence = (p.incidenceDeg ?? 0) * DEG;
   const dihedral = (p.dihedralDeg ?? 0) * DEG;
+  const sweep = (p.sweepDeg ?? 0) * DEG;
   const toward = Math.sign(p.span) || 1;
   const spanLen = Math.abs(p.span);
 
@@ -164,14 +187,21 @@ export function buildSurface(p: PanelSpec): Surface {
   let spanDir: Vector3;
 
   if (p.kind === "vstab") {
-    // Dérive : plan vertical, la normale pointe vers la droite.
+    // Dérive : plan vertical, la normale pointe vers la droite. La flèche incline le sommet vers l'arrière.
     chordDir = new Vector3(0, 0, 1);
     normal = new Vector3(1, 0, 0);
     spanDir = new Vector3(0, 1, 0);
+    const qSweep = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), sweep);
+    chordDir.applyQuaternion(qSweep);
+    spanDir.applyQuaternion(qSweep);
   } else {
     chordDir = new Vector3(0, 0, 1);
     normal = new Vector3(0, 1, 0);
     spanDir = new Vector3(toward, 0, 0);
+    // Flèche : rotation autour de la normale, le saumon recule.
+    const qSweep = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), -sweep * toward);
+    chordDir.applyQuaternion(qSweep);
+    spanDir.applyQuaternion(qSweep);
     // Calage : rotation autour de X (bord d'attaque qui monte pour un calage positif).
     const qInc = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), incidence);
     chordDir.applyQuaternion(qInc);
@@ -202,6 +232,8 @@ export function buildSurface(p: PanelSpec): Surface {
     airfoil: p.airfoil,
     control: p.control,
     wash: p.wash ?? 0,
+    downwash: p.downwash ?? (p.kind === "hstab" ? 1 : 0),
+    groundEffect: p.kind === "wing",
   };
 }
 
@@ -223,15 +255,15 @@ const WHITE_BOTTOM = 0x9ec5e8;
 function trainerPanels(opts: { ailerons: boolean; dihedralDeg: number; chord: number; halfSpan: number; wash: number }): PanelSpec[] {
   const { ailerons, dihedralDeg, chord, halfSpan, wash } = opts;
   const wingY = 0.09;
-  const wingZ = -0.02;
+  const wingZ = -0.005;
   const inner = halfSpan * 0.5;
   const outer = halfSpan - inner;
   const fullAR = (2 * halfSpan) ** 2 / (2 * halfSpan * chord);
   const aileron: SurfaceControl | undefined = ailerons
-    ? { links: [{ channel: "roll", sign: -1 }], maxDeflectionDeg: 22, flapFraction: 0.25 }
+    ? { links: [{ channel: "roll", sign: -1 }], maxDeflectionDeg: 18, flapFraction: 0.25 }
     : undefined;
   const aileronLeft: SurfaceControl | undefined = ailerons
-    ? { links: [{ channel: "roll", sign: 1 }], maxDeflectionDeg: 22, flapFraction: 0.25 }
+    ? { links: [{ channel: "roll", sign: 1 }], maxDeflectionDeg: 18, flapFraction: 0.25 }
     : undefined;
   const rudderLinks: ControlLink[] = ailerons
     ? [{ channel: "yaw", sign: -1 }]
@@ -260,20 +292,20 @@ function trainerPanels(opts: { ailerons: boolean; dihedralDeg: number; chord: nu
     },
     {
       name: "stab droit", kind: "hstab", root: [0.0, 0.02, 0.56], span: 0.23, chord: 0.14,
-      incidenceDeg: -1, airfoil: FLAT_SYMMETRIC, wash: 0.5, aspectRatio: 3.3,
-      control: { links: [{ channel: "pitch", sign: -1 }], maxDeflectionDeg: 25, flapFraction: 0.4 },
+      incidenceDeg: 0.5, airfoil: FLAT_SYMMETRIC, wash: 0.5, aspectRatio: 3.3,
+      control: { links: [{ channel: "pitch", sign: -1 }], maxDeflectionDeg: 16, flapFraction: 0.4 },
       color: RED, colorBottom: RED_BOTTOM,
     },
     {
       name: "stab gauche", kind: "hstab", root: [0.0, 0.02, 0.56], span: -0.23, chord: 0.14,
-      incidenceDeg: -1, airfoil: FLAT_SYMMETRIC, wash: 0.5, aspectRatio: 3.3,
-      control: { links: [{ channel: "pitch", sign: -1 }], maxDeflectionDeg: 25, flapFraction: 0.4 },
+      incidenceDeg: 0.5, airfoil: FLAT_SYMMETRIC, wash: 0.5, aspectRatio: 3.3,
+      control: { links: [{ channel: "pitch", sign: -1 }], maxDeflectionDeg: 16, flapFraction: 0.4 },
       color: RED, colorBottom: RED_BOTTOM,
     },
     {
       name: "dérive", kind: "vstab", root: [0, 0.02, 0.57], span: 0.2, chord: 0.15,
       airfoil: FLAT_SYMMETRIC, wash: 0.5, aspectRatio: 1.6,
-      control: { links: rudderLinks, maxDeflectionDeg: 30, flapFraction: 0.45 },
+      control: { links: rudderLinks, maxDeflectionDeg: 28, flapFraction: 0.45 },
       color: RED, colorBottom: RED,
     },
   ];
@@ -297,10 +329,13 @@ export const TRAINER_3CH: AircraftSpec = {
   name: "Débutant 3 voies",
   description: "Aile haute à grand dièdre, sans ailerons. Le manche de droite tourne avec la dérive, l'avion se redresse tout seul. Le plus facile.",
   mass: 0.7,
-  inertia: [0.055, 0.085, 0.05],
+  inertia: [0.065, 0.09, 0.05],
   panels: trainerPanels({ ailerons: false, dihedralDeg: 7, chord: 0.24, halfSpan: 0.66, wash: 0.3 }),
-  prop: { pos: [0, 0, -0.47], diameter: 0.23, maxThrust: 4.5, pitchSpeed: 20 },
+  engine: { type: "prop", pos: [0, 0, -0.47], diameter: 0.23, maxThrust: 4.5, pitchSpeed: 20, spoolTime: 0.15, torqueCoeff: 0.025 },
   contacts: trainerContacts,
+  servoRateDegPerSec: 350,
+  smokePos: [0, -0.02, 0.62],
+  noseWheelSteerDeg: 30,
   fuselage: { length: 0.95, width: 0.09, height: 0.11, center: [0, 0.0, 0.06], color: WHITE, colorBottom: WHITE_BOTTOM },
   cruiseSpeed: 9,
   bodyDragArea: 0.012,
@@ -312,17 +347,84 @@ export const TRAINER_4CH: AircraftSpec = {
   name: "Trainer 4 voies",
   description: "Aile haute avec ailerons, dièdre modéré. Comme un vrai trainer de club : on tourne aux ailerons, la dérive aide au sol et en virage.",
   mass: 0.85,
-  inertia: [0.06, 0.09, 0.05],
+  inertia: [0.072, 0.1, 0.05],
   panels: trainerPanels({ ailerons: true, dihedralDeg: 4, chord: 0.22, halfSpan: 0.66, wash: 0.3 }),
-  prop: { pos: [0, 0, -0.47], diameter: 0.23, maxThrust: 6.5, pitchSpeed: 24 },
+  engine: { type: "prop", pos: [0, 0, -0.47], diameter: 0.23, maxThrust: 6.5, pitchSpeed: 24, spoolTime: 0.15, torqueCoeff: 0.025 },
   contacts: trainerContacts,
+  servoRateDegPerSec: 350,
+  smokePos: [0, -0.02, 0.62],
+  noseWheelSteerDeg: 30,
   fuselage: { length: 0.95, width: 0.09, height: 0.11, center: [0, 0.0, 0.06], color: WHITE, colorBottom: WHITE_BOTTOM },
   cruiseSpeed: 11,
   bodyDragArea: 0.011,
   assist: { rollGain: 1.8, rollDamping: 0.2, pitchGain: 1.6, pitchDamping: 0.22, pitchTrimDeg: 2 },
 };
 
-export const AIRCRAFT_LIST: AircraftSpec[] = [TRAINER_3CH, TRAINER_4CH];
+export const JET_AIRFOIL: Airfoil = {
+  cl0: 0.05,
+  clAlpha: 5.4,
+  alphaStallPos: 15 * DEG,
+  alphaStallNeg: -12 * DEG,
+  cd0: 0.012,
+  cmac: -0.01,
+};
+
+const JET_BLUE = 0x1f4fb4;
+const JET_WHITE = 0xf2f2f2;
+const JET_RED = 0xd9262c;
+
+function jetPanels(): PanelSpec[] {
+  const halfSpan = 0.46;
+  const inner = 0.22;
+  const outer = halfSpan - inner;
+  const sweep = 28;
+  const fullAR = (2 * halfSpan) ** 2 / (2 * halfSpan * 0.21);
+  const wingY = 0.0;
+  const wingZ = -0.07;
+  const aileron = (sign: number): SurfaceControl => ({ links: [{ channel: "roll", sign }], maxDeflectionDeg: 20, flapFraction: 0.3 });
+  const innerTipZ = wingZ + inner * Math.tan(sweep * DEG);
+  return [
+    { name: "aile droite int.", kind: "wing", root: [0.07, wingY, wingZ], span: inner, chord: 0.24, sweepDeg: sweep, dihedralDeg: -3, incidenceDeg: 1.5, airfoil: JET_AIRFOIL, aspectRatio: fullAR, efficiency: 0.8, color: JET_BLUE, colorBottom: JET_WHITE },
+    { name: "aile gauche int.", kind: "wing", root: [-0.07, wingY, wingZ], span: -inner, chord: 0.24, sweepDeg: sweep, dihedralDeg: -3, incidenceDeg: 1.5, airfoil: JET_AIRFOIL, aspectRatio: fullAR, efficiency: 0.8, color: JET_BLUE, colorBottom: JET_WHITE },
+    { name: "aile droite ext.", kind: "wing", root: [0.07 + inner, wingY - inner * Math.sin(3 * DEG), innerTipZ], span: outer, chord: 0.18, sweepDeg: sweep, dihedralDeg: -3, incidenceDeg: 0.5, airfoil: JET_AIRFOIL, aspectRatio: fullAR, efficiency: 0.8, control: aileron(-1), color: JET_RED, colorBottom: JET_WHITE },
+    { name: "aile gauche ext.", kind: "wing", root: [-(0.07 + inner), wingY - inner * Math.sin(3 * DEG), innerTipZ], span: -outer, chord: 0.18, sweepDeg: sweep, dihedralDeg: -3, incidenceDeg: 0.5, airfoil: JET_AIRFOIL, aspectRatio: fullAR, efficiency: 0.8, control: aileron(1), color: JET_BLUE, colorBottom: JET_WHITE },
+    { name: "stab droit", kind: "hstab", root: [0.0, 0.0, 0.5], span: 0.17, chord: 0.13, sweepDeg: 30, dihedralDeg: -8, incidenceDeg: -3, airfoil: FLAT_SYMMETRIC, aspectRatio: 3, control: { links: [{ channel: "pitch", sign: -1 }], maxDeflectionDeg: 22, flapFraction: 0.45 }, color: JET_RED, colorBottom: JET_WHITE },
+    { name: "stab gauche", kind: "hstab", root: [0.0, 0.0, 0.5], span: -0.17, chord: 0.13, sweepDeg: 30, dihedralDeg: -8, incidenceDeg: -3, airfoil: FLAT_SYMMETRIC, aspectRatio: 3, control: { links: [{ channel: "pitch", sign: -1 }], maxDeflectionDeg: 22, flapFraction: 0.45 }, color: JET_RED, colorBottom: JET_WHITE },
+    { name: "dérive", kind: "vstab", root: [0, 0.05, 0.46], span: 0.21, chord: 0.17, sweepDeg: 38, airfoil: FLAT_SYMMETRIC, aspectRatio: 1.4, control: { links: [{ channel: "yaw", sign: -1 }], maxDeflectionDeg: 25, flapFraction: 0.4 }, color: JET_BLUE, colorBottom: JET_BLUE },
+    // Le fuselage avant se comporte comme une petite surface verticale déstabilisante.
+    { name: "fuselage avant", kind: "vstab", root: [0, -0.05, -0.45], span: 0.11, chord: 0.35, airfoil: FLAT_SYMMETRIC, aspectRatio: 0.4, efficiency: 0.6, color: JET_BLUE, colorBottom: JET_BLUE, thickness: 0.0 },
+  ];
+}
+
+export const ALPHAJET: AircraftSpec = {
+  id: "alphajet",
+  name: "Alphajet",
+  description: "Jet de la Patrouille de France en réacteur électrique. Rapide, vif, sans dièdre : pour les pilotes qui maîtrisent déjà le trainer. Interrupteur de fumée !",
+  mass: 1.8,
+  inertia: [0.095, 0.115, 0.045],
+  panels: jetPanels(),
+  engine: { type: "jet", pos: [0, 0.0, 0.52], diameter: 0.09, maxThrust: 15, pitchSpeed: 75, spoolTime: 0.7, torqueCoeff: 0 },
+  contacts: [
+    { name: "roue avant", pos: [0, -0.14, -0.36], kind: "wheel" },
+    { name: "roue droite", pos: [0.15, -0.14, 0.08], kind: "wheel" },
+    { name: "roue gauche", pos: [-0.15, -0.14, 0.08], kind: "wheel" },
+    { name: "patin arrière", pos: [0, -0.04, 0.62], kind: "skid" },
+    { name: "nez", pos: [0, 0, -0.64], kind: "body" },
+    { name: "dos", pos: [0, 0.12, 0.0], kind: "body" },
+    { name: "haut dérive", pos: [0, 0.27, 0.58], kind: "body" },
+    { name: "saumon droit", pos: [0.47, -0.03, 0.12], kind: "wingtip" },
+    { name: "saumon gauche", pos: [-0.47, -0.03, 0.12], kind: "wingtip" },
+  ],
+  servoRateDegPerSec: 500,
+  smokePos: [0, -0.01, 0.64],
+  noseWheelSteerDeg: 25,
+  fuselage: { length: 1.26, width: 0.13, height: 0.14, center: [0, 0.0, 0.0], color: JET_BLUE, colorBottom: JET_WHITE, intakes: true },
+  cruiseSpeed: 26,
+  bodyDragArea: 0.006,
+  assist: { rollGain: 1.1, rollDamping: 0.09, pitchGain: 1.1, pitchDamping: 0.1, pitchTrimDeg: 1.5 },
+};
+
+export const AIRCRAFT_LIST: AircraftSpec[] = [TRAINER_3CH, TRAINER_4CH, ALPHAJET];
 
 export function findAircraft(id: string): AircraftSpec {
   return AIRCRAFT_LIST.find((a) => a.id === id) ?? TRAINER_3CH;
