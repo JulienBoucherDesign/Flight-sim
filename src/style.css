@@ -1,0 +1,62 @@
+:root {
+  --bg: #0f1a2b;
+  --panel: rgba(255, 255, 255, 0.94);
+  --text: #16213a;
+  --accent: #ff7a1a;
+  --accent-dark: #d85f00;
+  --ok: #2fb66a;
+  --muted: #6b7280;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+#app { position: relative; width: 100vw; height: 100vh; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hidden { display: none !important; }
+
+#hud { position: absolute; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
+.hud-corner { position: absolute; top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.hud-top-left { left: 12px; }
+.hud-top-right { right: 12px; align-items: flex-end; }
+.hud-item { background: rgba(0,0,0,0.35); border-radius: 10px; padding: 6px 12px; display: flex; gap: 8px; align-items: baseline; }
+.hud-item span { font-size: 13px; opacity: 0.85; }
+.hud-item b { font-size: 22px; min-width: 2.2em; text-align: right; }
+.hud-item small { font-size: 12px; opacity: 0.8; }
+.hud-top-center { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); text-align: center; }
+#hud-message { font-size: 34px; font-weight: 800; letter-spacing: 0.5px; }
+#hud-sub { font-size: 16px; opacity: 0.9; }
+.hud-bottom { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 10px; pointer-events: auto; }
+.throttle-bar { width: 160px; height: 14px; background: rgba(0,0,0,0.4); border-radius: 8px; overflow: hidden; }
+#hud-throttle { height: 100%; width: 0%; background: var(--accent); transition: width 0.08s linear; }
+
+.panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, 94vw); max-height: 94vh; overflow: auto; background: var(--panel); border-radius: 18px; padding: 22px 26px; box-shadow: 0 20px 60px rgba(0,0,0,0.45); }
+.panel h1 { margin: 0 0 6px; font-size: 34px; }
+.panel h2 { margin: 0 0 6px; font-size: 26px; }
+.lead { margin: 0 0 16px; color: var(--muted); font-size: 16px; }
+.row { margin: 14px 0; }
+.row label { display: block; font-weight: 700; margin-bottom: 6px; }
+.hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.status { font-size: 14px; background: #eef2f7; border-radius: 10px; padding: 8px 12px; margin: 6px 0; }
+.status.ok { background: #e3f7ea; color: #176b3a; }
+select { font-size: 16px; padding: 8px 10px; border-radius: 10px; border: 1px solid #c9d1dc; width: 100%; }
+.choices { display: flex; gap: 8px; flex-wrap: wrap; }
+.choice { flex: 1; font-size: 16px; padding: 10px 12px; border-radius: 12px; border: 2px solid #c9d1dc; background: #fff; cursor: pointer; }
+.choice.active { border-color: var(--accent); background: #fff3e8; font-weight: 700; }
+.btn { font-size: 17px; padding: 10px 18px; border-radius: 12px; border: none; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
+.btn:hover { background: var(--accent-dark); }
+.btn.small { font-size: 14px; padding: 8px 12px; background: #334155; }
+.btn.small:hover { background: #1e293b; }
+.btn.big { width: 100%; font-size: 26px; padding: 16px; margin-top: 10px; }
+.buttons { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.help { margin-top: 16px; font-size: 14px; color: var(--muted); }
+.help ul { margin: 6px 0 0; padding-left: 18px; }
+.axes { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; margin: 10px 0; }
+.axis { background: #eef2f7; border-radius: 8px; padding: 6px 8px; font-size: 12px; }
+.axis .bar { height: 8px; background: #d5dce6; border-radius: 4px; position: relative; margin-top: 4px; }
+.axis .bar i { position: absolute; top: -2px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); }
+.axis.hot { background: #fff3e8; outline: 2px solid var(--accent); }
+@media (max-width: 600px) {
+  #hud-message { font-size: 24px; }
+  .hud-item b { font-size: 18px; }
+  .panel { padding: 16px; }
+}

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simulateur RC</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="view"></canvas>
+
+      <div id="hud" class="hidden">
+        <div class="hud-corner hud-top-left">
+          <div class="hud-item"><span>Altitude</span><b id="hud-alt">0</b><small>m</small></div>
+          <div class="hud-item"><span>Vitesse</span><b id="hud-speed">0</b><small>km/h</small></div>
+        </div>
+        <div class="hud-top-center">
+          <div id="hud-message"></div>
+          <div id="hud-sub"></div>
+        </div>
+        <div class="hud-corner hud-top-right">
+          <div class="hud-item"><span>Anneaux</span><b id="hud-score">0</b></div>
+          <div class="hud-item"><span>Aide</span><b id="hud-assist">Forte</b></div>
+        </div>
+        <div class="hud-bottom">
+          <div class="throttle-bar" title="Gaz"><div id="hud-throttle"></div></div>
+          <button id="btn-reset" class="btn small">Recommencer</button>
+          <button id="btn-camera" class="btn small">Caméra</button>
+          <button id="btn-sound" class="btn small">Son</button>
+          <button id="btn-menu" class="btn small">Menu</button>
+        </div>
+      </div>
+
+      <div id="menu" class="panel">
+        <h1>Simulateur RC</h1>
+        <p class="lead">Entraîne-toi avec ta radiocommande, sans casser d'avion.</p>
+
+        <div class="row">
+          <label>Radio</label>
+          <div id="input-status" class="status">Aucune radio détectée, clavier actif. Branche la radio en USB et bouge un manche.</div>
+          <button id="btn-calibrate" class="btn">Régler la radio</button>
+        </div>
+
+        <div class="row">
+          <label for="sel-aircraft">Avion</label>
+          <select id="sel-aircraft"></select>
+          <div id="aircraft-desc" class="hint"></div>
+        </div>
+
+        <div class="row">
+          <label>Aide au pilotage</label>
+          <div class="choices" id="assist-choices">
+            <button class="choice" data-assist="2">Forte</button>
+            <button class="choice" data-assist="1">Légère</button>
+            <button class="choice" data-assist="0">Aucune</button>
+          </div>
+          <div class="hint">Forte : l'avion se remet à plat tout seul quand tu lâches le manche. Aucune : comme un vrai avion.</div>
+        </div>
+
+        <div class="row">
+          <label>Départ</label>
+          <div class="choices" id="start-choices">
+            <button class="choice" data-start="air">En l'air</button>
+            <button class="choice" data-start="ground">Sur la piste</button>
+          </div>
+        </div>
+
+        <button id="btn-fly" class="btn big">Voler !</button>
+
+        <details class="help">
+          <summary>Touches du clavier</summary>
+          <ul>
+            <li><b>Flèches</b> : manche droit (profondeur et ailerons)</li>
+            <li><b>Z / S</b> : gaz plus / moins</li>
+            <li><b>Q / D</b> : dérive</li>
+            <li><b>Espace</b> : recommencer, <b>C</b> : caméra, <b>P</b> : pause, <b>Échap</b> : menu</li>
+          </ul>
+        </details>
+      </div>
+
+      <div id="wizard" class="panel hidden">
+        <h2 id="wiz-title">Réglage de la radio</h2>
+        <p id="wiz-text" class="lead"></p>
+        <div id="wiz-axes" class="axes"></div>
+        <div id="wiz-detected" class="status"></div>
+        <div class="buttons">
+          <button id="wiz-back" class="btn small">Retour</button>
+          <button id="wiz-skip" class="btn small">Passer</button>
+          <button id="wiz-next" class="btn">Suivant</button>
+          <button id="wiz-cancel" class="btn small">Annuler</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
